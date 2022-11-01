@@ -1,3 +1,4 @@
+import hashlib
 from dataclasses import dataclass
 from typing import List, Dict, Any
 
@@ -22,6 +23,7 @@ class Torrent:
     piece_length: int
     dir: str
     filename: str
+    info_hash: bytes
     pieces: List[str]
     files: List[File]
 
@@ -33,7 +35,9 @@ class Torrent:
         with open(self.filepath, 'rb') as f:
             torrent = bencodepy.decode(f.read())
         self.announce = bytes_to_str(torrent[b'announce'])
-        self.decode_info(torrent[b'info'])
+        info = torrent[b'info']
+        self.info_hash = hashlib.sha1(info).digest()
+        self.decode_info(info)
 
     def decode_info(self, info: Dict[bytes, Any]):
         self.piece_length = info[b'piece length']
