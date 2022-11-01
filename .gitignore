@@ -1,0 +1,9 @@
+# PyCharm
+.idea
+
+# Python
+*.pyc
+
+# Project
+data
+.venv
