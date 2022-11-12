@@ -10,7 +10,7 @@ def bytes_to_str(b: bytes) -> str:
     return b.decode('utf-8')
 
 
-def generate_id() -> bytes:
+def generate_id() -> str:
     """
     Generates an Azureus-style peer_id.
     Concatenates client id, version and a 12 digit random number.
@@ -21,4 +21,4 @@ def generate_id() -> bytes:
     random_num = random.randint(10 ** (n-1), (10 ** n) - 1)
     _id = f'-{CLIENT_ID}{VERSION}-{random_num}'
     log.info(f'Generated {_id=}')
-    return _id.encode(encoding='utf-8')
+    return _id

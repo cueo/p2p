@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 import bencodepy
 
 from log import get_logger
-from util import bytes_to_str
+from util import bytes_to_str, generate_id
 
 log = get_logger(__name__)
 
@@ -18,11 +18,12 @@ class File:
 
 @dataclass
 class Torrent:
+    peer_id: str
     announce: str
     piece_length: int
     dir: str
     filename: str
-    info_hash: str
+    info_hash: bytes
     uploaded: str
     downloaded: str
     left: str
@@ -32,6 +33,7 @@ class Torrent:
     files: List[File]
 
     def __init__(self, filepath: str):
+        self.peer_id = generate_id()
         self.filepath = filepath
         self.decode()
 
@@ -40,8 +42,7 @@ class Torrent:
             torrent = bencodepy.decode(f.read())
         self.announce = bytes_to_str(torrent[b'announce'])
         info = torrent[b'info']
-        self.info_hash = hashlib.sha1(bencodepy.bencode(info)).hexdigest()
-        self.info_hash = "%" + "%".join(list(self.info_hash[i:i + 2] for i in range(0, len(self.info_hash), 2)))
+        self.info_hash = hashlib.sha1(bencodepy.bencode(info)).digest()
         self.decode_info(info)
 
     def decode_info(self, info: Dict[bytes, Any]):

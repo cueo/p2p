@@ -1,6 +1,20 @@
-import logging
+import log
 import socket
-from struct import unpack, pack
+from struct import unpack
+from urllib.parse import urlencode
+
+import bencodepy
+import requests
+
+from const import CHUNK_SIZE
+from log import get_logger
+from models import peer
+from models.peer import Peer
+from models.torrent import Torrent
+from util import generate_id
+
+log = get_logger(__name__)
+
 
 class TrackerResponse:
     """
@@ -59,24 +73,19 @@ class TrackerResponse:
         # the peers are encoded in a single string
         peers = self.response[b'peers']
         if type(peers) == list:
-            # TODO Implement support for dictionary peer list
-            logging.debug('Dictionary model peers are returned by tracker')
-            print(peers)
-            peerList = []
-            for orderedValue in peers:
-                print(orderedValue[b'ip'], orderedValue[b'port'])
-                print(socket.inet_ntoa(pack('!I', orderedValue[b'ip'])))
-            return peerList
+            log.debug('List of peers returned by tracker')
+            peers = [peer.from_dict(p) for p in peers]
         else:
-            logging.debug('Binary model peers are returned by tracker')
+            log.debug('Binary model peers are returned by tracker')
 
             # Split the string in pieces of length 6 bytes, where the first
             # 4 characters is the IP the last 2 is the TCP port.
-            peers = [peers[i:i+6] for i in range(0, len(peers), 6)]
+            peers = [peers[i:i + 6] for i in range(0, len(peers), 6)]
 
             # Convert the encoded address to a list of tuples
-            return [(socket.inet_ntoa(p[:4]), _decode_port(p[4:]))
-                    for p in peers]
+            peers = [(socket.inet_ntoa(p[:4]), _decode_port(p[4:]))
+                     for p in peers]
+        return peers
 
     # def __str__(self):
     #     return "incomplete: {incomplete}\n" \
@@ -88,5 +97,31 @@ class TrackerResponse:
     #                interval=self.interval,
     #                peers=", ".join([x for (x, _) in self.peers]))
 
+
 def _decode_port(port):
     return unpack(">H", port)[0]
+
+
+def announce(torrent: Torrent) -> TrackerResponse:
+    params = {
+        'uploaded': 0,
+        'peer_id': torrent.peer_id,
+        'downloaded': 0,
+        'left': torrent.piece_length,
+        'port': 10000,
+        'info_hash': torrent.info_hash
+    }
+    params_str = urlencode(params, safe='%')
+
+    with requests.get(url=torrent.announce, params=params_str, stream=True) as r:
+        r.raise_for_status()
+        announce_response = b''
+        for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
+            announce_response += chunk
+        response = TrackerResponse(bencodepy.decode(announce_response))
+        return response
+
+
+def connect(peer: Peer):
+    r = requests.get(peer.url)
+

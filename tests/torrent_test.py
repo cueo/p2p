@@ -1,11 +1,11 @@
 import unittest
 
-from torrent.torrent import Torrent
+from models.torrent import Torrent
 
 
 class TorrentTests(unittest.TestCase):
     def test_decode(self):
-        torrent = Torrent('../data/ubuntu.torrent')
+        torrent = Torrent('data/ubuntu.torrent')
         print(torrent)
 
 
