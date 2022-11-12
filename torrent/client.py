@@ -11,29 +11,41 @@ log = get_logger(__name__)
 
 
 class Client:
-    def __init__(self, peers: List[Peer], info_hash: str, peer_id: str):
+    def __init__(self, peers: List[Peer], info_hash: bytes, peer_id: str):
         self.peers = peers
+        self.info_hash = info_hash
+        self.peer_id = peer_id
+
+    async def connect(self):
+        """
+        Connect to peers.
+        """
+        log.info(f'Attempting connection to {len(self.peers)} peers.')
+        tasks = [PeerClient(peer, self.info_hash, self.peer_id).connect() for peer in self.peers[:5]]
+        await asyncio.gather(*tasks)
+
+
+class PeerClient:
+    def __init__(self, peer: Peer, info_hash: bytes, peer_id: str):
+        self.peer = peer
         self.info_hash = info_hash
         self.peer_id = peer_id
 
         self.reader = None
         self.writer = None
 
-        self.data_length = 68
-        self.state = 'choked'
-
-    async def _connect_to_peer(self, peer: Peer):
+    async def connect(self):
         try:
-            self.reader, self.writer = await asyncio.wait_for(asyncio.open_connection(peer.ip, peer.port),
+            self.reader, self.writer = await asyncio.wait_for(asyncio.open_connection(self.peer.ip, self.peer.port),
                                                               timeout=PEER_CONNECT_TIMEOUT)
             log.info(f'Connection opened to peer={self.peer_id}')
             await self._handshake()
             response = await asyncio.wait_for(self.reader.readexactly(self.data_length),
                                               timeout=PEER_CONNECT_TIMEOUT)
             if response[28:48] != self.info_hash:
-                log.error(f"Info hash doesn't match for peer={peer.peer_id}!")
+                log.error(f"Info hash doesn't match for peer={self.peer.peer_id}!")
                 return
-            log.info(f'Verified info hash for peer={peer.peer_id}.')
+            log.info(f'Verified info hash for peer={self.peer.peer_id}.')
             await self._interested()
 
             response = await self._receive_message()
@@ -62,14 +74,6 @@ class Client:
         log.info('Received and parsed response.')
         return message_id, payload
 
-    async def connect(self):
-        """
-        Connect to peers.
-        """
-        log.info(f'Attempting connection to {len(self.peers)} peers.')
-        tasks = [self._connect_to_peer(peer) for peer in self.peers[:5]]
-        await asyncio.gather(*tasks)
-
     async def _handshake(self):
         info_hash = self.info_hash
         handshake_bytes = struct.pack('>B19s8x20s20s',
@@ -77,7 +81,6 @@ class Client:
                                       PROTOCOL,
                                       info_hash,
                                       self.peer_id.encode('utf-8'))
-        # handshake_bytes = bytes(PROTOCOL_LEN) + PROTOCOL + (b'\0' * 8)
         log.info(f'Sending message={handshake_bytes}')
         self.data_length = len(handshake_bytes)
         self.writer.write(handshake_bytes)
