@@ -1,14 +1,13 @@
 import unittest
 
-from torrent import tracker
 from models.torrent import Torrent
+from torrent.tracker import TrackerClient
 
 
-class TrackerTests(unittest.TestCase):
-    def test_announce(self):
-        torrent = Torrent('data/ubuntu.torrent')
-        response = tracker.announce(torrent)
-        assert response is not None
+class TrackerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_announce(self):
+        torrent = Torrent('data/bbb.torrent')
+        response = await TrackerClient(torrent).announce()
         assert response.peers is not None
 
 

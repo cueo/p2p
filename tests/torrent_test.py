@@ -5,7 +5,7 @@ from models.torrent import Torrent
 
 class TorrentTests(unittest.TestCase):
     def test_decode(self):
-        torrent = Torrent('data/ubuntu.torrent')
+        torrent = Torrent('data/bbb.torrent')
         print(torrent)
 
 

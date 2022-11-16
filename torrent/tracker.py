@@ -1,19 +1,24 @@
-import log
-import socket
+import asyncio
+import random
+import struct
+from abc import ABC, abstractmethod
+from asyncio import DatagramProtocol, BaseTransport, BaseProtocol
+from asyncio.exceptions import TimeoutError
 from struct import unpack
+from typing import Tuple
 from urllib.parse import urlencode
+from urllib.parse import urlparse
 
+import aiohttp
 import bencodepy
-import requests
+from yarl import URL
 
-from const import CHUNK_SIZE
+from const import CHUNK_SIZE, ActionType
 from log import get_logger
 from models import peer
-from models.peer import Peer
 from models.torrent import Torrent
-from util import generate_id
 
-log = get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class TrackerResponse:
@@ -73,18 +78,11 @@ class TrackerResponse:
         # the peers are encoded in a single string
         peers = self.response[b'peers']
         if type(peers) == list:
-            log.debug('List of peers returned by tracker')
-            peers = [peer.from_dict(p) for p in peers]
+            logger.debug('List of peers returned by tracker')
+            peers = peer.from_dict(peers)
         else:
-            log.debug('Binary model peers are returned by tracker')
-
-            # Split the string in pieces of length 6 bytes, where the first
-            # 4 characters is the IP the last 2 is the TCP port.
-            peers = [peers[i:i + 6] for i in range(0, len(peers), 6)]
-
-            # Convert the encoded address to a list of tuples
-            peers = [(socket.inet_ntoa(p[:4]), _decode_port(p[4:]))
-                     for p in peers]
+            logger.debug('Binary model peers are returned by tracker')
+            peers = peer.from_bytes(peers)
         return peers
 
     # def __str__(self):
@@ -98,30 +96,165 @@ class TrackerResponse:
     #                peers=", ".join([x for (x, _) in self.peers]))
 
 
+class BaseTracker(ABC):
+    @abstractmethod
+    async def announce(self) -> TrackerResponse:
+        pass
+
+
+class HttpTracker(BaseTracker):
+    def __init__(self, torrent: Torrent):
+        self.torrent = torrent
+
+    async def announce(self) -> TrackerResponse:
+        params = {
+            'uploaded': 0,
+            'peer_id': self.torrent.peer_id,
+            'downloaded': 0,
+            'left': self.torrent.piece_length,
+            'port': 10000,
+            'info_hash': self.torrent.info_hash
+        }
+        params_str = urlencode(params, safe='%')
+
+        async with aiohttp.ClientSession() as session:
+            url = f'{self.torrent.announce}?{params_str}'
+            async with session.get(URL(url, encoded=True)) as r:
+                announce_response = b''
+                while True:
+                    chunk = await r.content.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    announce_response += chunk
+                response = TrackerResponse(bencodepy.decode(announce_response))
+                return response
+
+
+class UdpTracker(DatagramProtocol, BaseTracker):
+    def __init__(self, torrent: Torrent):
+        self.torrent = torrent
+
+        self.received_message = None
+
+        self.loop = asyncio.get_event_loop()
+        self.delivery_tracker = {}
+        self.transport = None
+
+    MAGIC_CONNECTION_ID = 0x41727101980
+
+    RESPONSE_HEADER_FMT = '!II'
+    RESPONSE_HEADER_LEN = struct.calcsize(RESPONSE_HEADER_FMT)
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def datagram_received(self, data, addr):
+        logger.info(f'Data received from {addr=}, yay!!!')
+        action, tid = struct.unpack('!II', data[:8])
+        self.received_message = data
+        if tid in self.delivery_tracker:
+            self.delivery_tracker[tid].set()
+        else:
+            logger.warning('Invalid transaction ID received.')
+
+    async def announce(self):
+        tid = random.randint(0, 2 ** 32 - 1)
+        self.delivery_tracker[tid] = asyncio.Event()
+        request = pack(
+            'Q', UdpTracker.MAGIC_CONNECTION_ID,
+            'I', 0,
+            'I', tid,
+        )
+        logger.info(f'Sending UDP connect request, {tid=}.')
+        try:
+            self.transport.sendto(request)
+            await asyncio.wait_for(self.delivery_tracker[tid].wait(), timeout=5)
+            del self.delivery_tracker[tid]
+        except TimeoutError as e:
+            logger.error('UDP connection timed out while waiting for reply!')
+            raise e
+        logger.info(f'UDP connection successful for {tid=}')
+
+        (connection_id,) = struct.unpack_from('!Q', self.received_message, UdpTracker.RESPONSE_HEADER_LEN)
+        request = pack(
+            'Q', connection_id,
+            'I', ActionType.announce.value,
+            'I', tid,
+            '20s', self.torrent.info_hash,
+            '20s', self.torrent.peer_id.encode('utf-8'),
+            'Q', 0,
+            'Q', self.torrent.piece_length,
+            'Q', 0,
+            'I', 2,  # event.value,
+            'I', 0,  # IP address: default
+            'I', random.randint(0, 2 ** 32 - 1),  # Key
+            'i', -1,  # numwant: default
+            'H', 10000,
+        )
+        self.delivery_tracker[tid] = asyncio.Event()
+        self.transport.sendto(request)
+        await asyncio.wait_for(self.delivery_tracker[tid].wait(), timeout=500)
+        del self.delivery_tracker[tid]
+        logger.info(f'UDP announce successful for {tid=}')
+
+        fmt = '!3I'
+        interval, leech_count, seed_count = struct.unpack_from(fmt, self.received_message,
+                                                               UdpTracker.RESPONSE_HEADER_LEN)
+        compact_peer_list = self.received_message[UdpTracker.RESPONSE_HEADER_LEN + struct.calcsize(fmt):]
+        return TrackerResponse({
+            b'interval': interval,
+            b'complete': seed_count,
+            b'incomplete': leech_count,
+            b'peers': compact_peer_list
+        })
+
+
+async def start_udp_tracker(torrent: Torrent) -> Tuple[BaseTransport, BaseProtocol]:
+    if torrent.announce_list:
+        url = random.choice(torrent.announce_list)
+        # so that we don't hit a bad tracker twice
+        torrent.announce_list.remove(url)
+    else:
+        url = torrent.announce
+    host, port = parse_url(url)
+    logger.info(f'Attempting UDP connection with {host=} {port=}.')
+    loop = asyncio.get_event_loop()
+    transport, proto = await loop.create_datagram_endpoint(lambda: UdpTracker(torrent), remote_addr=(host, port))
+    return transport, proto
+
+
+class TrackerClient:
+    def __init__(self, torrent: Torrent):
+        self.torrent = torrent
+        self.loop = asyncio.get_event_loop()
+
+    async def announce(self) -> TrackerResponse:
+        torrent = self.torrent
+        if torrent.announce.startswith('udp'):
+            while True:
+                transport, proto = await asyncio.create_task(start_udp_tracker(torrent))
+                logger.info('Started UDP tracker client.')
+                try:
+                    return await proto.announce()
+                except TimeoutError:
+                    pass
+        else:
+            return await HttpTracker(torrent).announce()
+
+
+def parse_url(url: str) -> Tuple[str, int]:
+    parsed_url = urlparse(url)
+    host, port = parsed_url.netloc.split(':')
+    return host, int(port)
+
+
 def _decode_port(port):
     return unpack(">H", port)[0]
 
 
-def announce(torrent: Torrent) -> TrackerResponse:
-    params = {
-        'uploaded': 0,
-        'peer_id': torrent.peer_id,
-        'downloaded': 0,
-        'left': torrent.piece_length,
-        'port': 10000,
-        'info_hash': torrent.info_hash
-    }
-    params_str = urlencode(params, safe='%')
+def pack(*data) -> bytes:
+    assert len(data) % 2 == 0
 
-    with requests.get(url=torrent.announce, params=params_str, stream=True) as r:
-        r.raise_for_status()
-        announce_response = b''
-        for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
-            announce_response += chunk
-        response = TrackerResponse(bencodepy.decode(announce_response))
-        return response
-
-
-def connect(peer: Peer):
-    r = requests.get(peer.url)
-
+    common_format = '!' + ''.join(fmt for fmt in data[::2])
+    values = [elem for elem in data[1::2]]
+    return struct.pack(common_format, *values)

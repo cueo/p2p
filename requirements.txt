@@ -1,2 +1,4 @@
+aiofile
+aiohttp[speedups]
 bencode.py
-requests
+bitarray

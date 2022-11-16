@@ -1,17 +1,21 @@
-import asyncio
 import unittest
 
-from torrent import tracker
+from log import get_logger
 from models.torrent import Torrent
 from torrent.client import Client
+from torrent.tracker import TrackerClient
+
+log = get_logger(__name__)
 
 
-async def test_peer_connect():
-    torrent = Torrent('data/ubuntu.torrent')
-    response = tracker.announce(torrent)
-    client = Client(response.peers, info_hash=torrent.info_hash, peer_id=torrent.peer_id)
-    await client.connect()
+class ClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_peer_connect(self):
+        torrent = Torrent('data/bbb.torrent')
+        response = await TrackerClient(torrent).announce()
+        client = Client(response.peers, torrent)
+        await client.connect()
+        await client.download()
 
 
 if __name__ == '__main__':
-    asyncio.run(test_peer_connect())
+    unittest.main()
