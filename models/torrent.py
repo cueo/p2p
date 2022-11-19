@@ -75,7 +75,11 @@ class Torrent:
         if b'files' not in info:
             # Single file mode
             log.info('Single file mode...')
+            self.files = [File(info[b'length'],'')]
+            self.length = sum([file.length for file in self.files])
+            self.files = [File(info[b'length'], bytes_to_str(info[b'name']))]
             self.filename = bytes_to_str(info[b'name'])
+            log.info(f'Org File Name={self.filename}')
         else:
             log.info('Multiple files mode...')
             self.files = [File(file[b'length'], file[b'path'][-1].decode('utf-8')) for file in info[b'files']]

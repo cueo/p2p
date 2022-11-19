@@ -20,5 +20,5 @@ def generate_id() -> str:
     n = 12
     random_num = random.randint(10 ** (n-1), (10 ** n) - 1)
     _id = f'-{CLIENT_ID}{VERSION}-{random_num}'
-    log.info(f'Generated {_id=}')
+    log.info(f'Generated {_id}')
     return _id

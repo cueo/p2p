@@ -63,7 +63,8 @@ class Client:
 
     async def download(self):
         for i, piece in enumerate(self.torrent.download_info.pieces):
-            peer = piece.owners.pop()
+            # peer = piece.owners.pop()
+            peer = list(piece.owners)[0]
             await self.peer_connections[peer.peer_id].download(i)
 
 
@@ -109,8 +110,9 @@ class PeerClient:
             # read length
             response = await asyncio.wait_for(self.reader.readexactly(4), timeout=PEER_CONNECT_TIMEOUT)
             (length,) = struct.unpack('!I', response)
-
+            log.info(f'Message length={length}')
             response = await asyncio.wait_for(self.reader.readexactly(length), timeout=PEER_CONNECT_TIMEOUT)
+            # log.info(f'Message info={response}')
         except IncompleteReadError:
             log.warn(f'0 bytes read from peer={self.torrent.peer_id}')
             return
@@ -120,7 +122,7 @@ class PeerClient:
             return
         try:
             message_id = PeerMessage(response[0])
-            log.info('Received a message.')
+            log.info(f'Received a message.={str(response)}')
         except ValueError:
             return
 
@@ -181,7 +183,8 @@ class PeerClient:
             self._send_message(PeerMessage.request, payload)
         log.info(f'Request blocks for piece={piece_index}')
         log.info('Sent message, receiving now...')
-        await self._receive_message()
+        while True:
+            await self._receive_message()
 
     def _send_message(self, message_type: PeerMessage, payload: bytes):
         length = len(payload) + 1
@@ -191,8 +194,12 @@ class PeerClient:
     async def _handle_piece(self, payload: bytes):
         fmt = '!2I'
         piece_index, block_begin = struct.unpack_from(fmt, payload)
-        block_index = 1
+        block_index = int(block_begin/BLOCK_SIZE)
+        log.info(f'Block Index={block_index}')
+        log.info(f'Block Begin={block_begin}')
+        log.info(f'No of pieces={len(self.torrent.pieces)}')
         piece = self.torrent.pieces[piece_index]
+        log.info(f'No of blocks={len(piece.blocks)}')
         if piece.is_downloaded:
             return
         piece.blocks[block_index].is_downloaded = True
@@ -214,7 +221,7 @@ class PeerClient:
         for i in range(0, file_index):
             offset -= self.torrent.files[i].length
         filepath = os.path.join(DOWNLOAD_PATH, file_to_write.path)
-
+        log.info(f'File Name={file_to_write.path}')
         async with async_open(filepath, 'r+b') as afp:
             afp.seek(offset)
             await afp.write(data)
