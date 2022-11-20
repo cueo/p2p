@@ -12,6 +12,7 @@ from const import PROTOCOL_LEN, PROTOCOL, PEER_CONNECT_TIMEOUT, PeerMessage, BLO
 from log import get_logger
 from models.peer import Peer
 from models.piece import Block
+from models.request import BlockRequest
 from models.torrent import Torrent
 
 log = get_logger(__name__)
@@ -66,6 +67,11 @@ class Client:
             # peer = piece.owners.pop()
             peer = list(piece.owners)[0]
             await self.peer_connections[peer.peer_id].download(i)
+
+    async def upload(self, peer_id, piece_index, block_index):
+
+        await self.peer_connections[peer.peer_id].download(i)
+
 
 
 class PeerClient:
@@ -133,6 +139,8 @@ class PeerClient:
             self._handle_unchoke()
         elif message_id == PeerMessage.piece:
             log.info('Received a piece message, yay!')
+            await self._handle_piece(payload)
+        elif message_id == PeerMessage.request:
             await self._handle_piece(payload)
         else:
             log.info(f'Received a non-bitfield message, type={message_id}')
@@ -229,3 +237,17 @@ class PeerClient:
         # self.fd.seek(offset)
         # self.fd.write(data)
         log.info('Successfully wrote to the file.')
+
+    ###### send a block of code upon receiving a request
+    async def _send_block(self, request: BlockRequest):
+
+        # TODO: Read the data from mile here
+        block = None
+        self._send_message(PeerMessage.piece, struct.pack('!2I', request.piece_index, request.block_begin), block)
+
+        self._uploaded += request.block_length
+        self._download_info.session_statistics.add_uploaded(self._peer, request.block_length)
+
+
+    def _accept(self):
+        return
