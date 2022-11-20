@@ -40,10 +40,16 @@ class Client:
     def init_blocks(self):
         self._create_file()
         for index, piece in enumerate(self.torrent.pieces):
-            n_blocks = math.ceil(self.torrent.piece_length / BLOCK_SIZE)
+            if piece.is_last and self.torrent.file_length % self.torrent.piece_length != 0:
+                remaining_length = self.torrent.file_length % self.torrent.piece_length
+                n_blocks = math.ceil(remaining_length / BLOCK_SIZE)
+            else:
+                n_blocks = math.ceil(self.torrent.piece_length / BLOCK_SIZE)
             piece.blocks = [Block(index, offset * BLOCK_SIZE, BLOCK_SIZE) for offset in range(n_blocks)]
-        if self.torrent.piece_length % BLOCK_SIZE != 0:
-            self.torrent.pieces[-1].blocks[-1].length = self.torrent.piece_length % BLOCK_SIZE
+        if self.torrent.file_length % BLOCK_SIZE != 0:
+            # log.info(f'Last piece size {self.torrent.file_length % BLOCK_SIZE}')
+            # self.torrent.pieces[-1].blocks[-1].length = self.torrent.piece_length % BLOCK_SIZE
+            self.torrent.pieces[-1].blocks[-1].length = self.torrent.file_length % BLOCK_SIZE
         log.info('Successfully initialized blocks.')
 
     def _create_file(self):
@@ -62,9 +68,9 @@ class Client:
                         pass
 
     async def download(self):
+        log.info(f'Number of pieces {len(self.torrent.download_info.pieces)}')
         for i, piece in enumerate(self.torrent.download_info.pieces):
-            # peer = piece.owners.pop()
-            peer = list(piece.owners)[0]
+            peer = piece.owners.pop()
             await self.peer_connections[peer.peer_id].download(i)
 
 
@@ -78,6 +84,7 @@ class PeerClient:
 
         self.is_choked = True
         self.is_interested = False
+        self.is_bit_field_received = False
 
         # self.path = os.path.join(DOWNLOAD_PATH, self.torrent.filename)
 
@@ -97,7 +104,7 @@ class PeerClient:
 
             while True:
                 await self._receive_message()
-                if not self.is_choked:
+                if not self.is_choked and self.is_bit_field_received:
                     break
 
         except TimeoutError:
@@ -159,6 +166,7 @@ class PeerClient:
         await self.writer.drain()
 
     def _handle_bitfield(self, payload):
+        self.is_bit_field_received = True
         arr = bitarray(endian='big')
         arr.frombytes(payload)
         piece_count = self.torrent.download_info.piece_count
@@ -179,11 +187,14 @@ class PeerClient:
     async def download(self, piece_index: int):
         blocks = self.torrent.pieces[piece_index].blocks
         for block in blocks:
+            log.info(f'Size of the request {block.offset} {block.length}')
             payload = struct.pack('!3I', piece_index, block.offset, block.length)
             self._send_message(PeerMessage.request, payload)
         log.info(f'Request blocks for piece={piece_index}')
         log.info('Sent message, receiving now...')
-        while True:
+        # while True:
+        #     await self._receive_message()
+        while not self.torrent.pieces[piece_index].is_downloaded:
             await self._receive_message()
 
     def _send_message(self, message_type: PeerMessage, payload: bytes):
@@ -194,10 +205,9 @@ class PeerClient:
     async def _handle_piece(self, payload: bytes):
         fmt = '!2I'
         piece_index, block_begin = struct.unpack_from(fmt, payload)
-        block_index = int(block_begin/BLOCK_SIZE)
+        block_index = int(block_begin / BLOCK_SIZE)
         log.info(f'Block Index={block_index}')
         log.info(f'Block Begin={block_begin}')
-        log.info(f'No of pieces={len(self.torrent.pieces)}')
         piece = self.torrent.pieces[piece_index]
         log.info(f'No of blocks={len(piece.blocks)}')
         if piece.is_downloaded:
