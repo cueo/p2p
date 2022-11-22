@@ -9,14 +9,14 @@ from torrent.client import PeerClient
 from models.peer import Peer
 
 
-__all__= ['PeerTCPServer']
+__all__= ['PeerServer']
 
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 
-class PeerTCPServer:
+class PeerServer:
     def __init__(self, peer_id: bytes):
         self._peer_id = peer_id
         self._server = None
@@ -46,7 +46,7 @@ class PeerTCPServer:
     PORT_RANGE = range(6881, 6889 + 1)
 
     async def start(self):
-        for port in PeerTCPServer.PORT_RANGE:
+        for port in PeerServer.PORT_RANGE:
             try:
                 self._server = await asyncio.start_server(self._accept, port=port)
             except asyncio.CancelledError:

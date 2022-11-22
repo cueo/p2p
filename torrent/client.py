@@ -248,6 +248,5 @@ class PeerClient:
         self._uploaded += request.block_length
         self._download_info.session_statistics.add_uploaded(self._peer, request.block_length)
 
-
-    def _accept(self):
-        return
+    async def _accept(self):
+        return None
