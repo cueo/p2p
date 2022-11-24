@@ -11,7 +11,7 @@ log = get_logger(__name__)
 
 class ClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_peer_connect(self):
-        torrent = Torrent('data/vsomasu_hw3_penpaper.torrent')
+        torrent = Torrent('../data/test.torrent')
         response = await TrackerClient(torrent).announce()
         peers = [Peer('10.0.0.98',55251, b'001')]#, Peer('10.0.0.173',19001, b'002')]
         # client = Client(response.peers, torrent)
