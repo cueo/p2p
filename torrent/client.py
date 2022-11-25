@@ -2,12 +2,13 @@ import asyncio
 import os.path
 import struct
 from asyncio import IncompleteReadError
-from typing import List
+from typing import List, cast
 
 import math
 from aiofile import async_open
 from bitarray import bitarray
 
+import const
 from const import PROTOCOL_LEN, PROTOCOL, PEER_CONNECT_TIMEOUT, PeerMessage, BLOCK_SIZE, DOWNLOAD_PATH
 from log import get_logger
 from models.peer import Peer
@@ -74,11 +75,9 @@ class Client:
             peer = piece.owners.pop()
             await self.peer_connections[peer.peer_id].download(i)
 
-    async def upload(self, peer_id, piece_index, block_index):
-
-        await self.peer_connections[peer.peer_id].download(i)
-
-
+    # async def upload(self, peer_id, piece_index, block_index):
+    #
+    #     await self.peer_connections[peer.peer_id].download(i)
 
 class PeerClient:
     def __init__(self, peer: Peer, torrent: Torrent):
@@ -102,6 +101,7 @@ class PeerClient:
             await self._handshake()
             response = await asyncio.wait_for(self.reader.readexactly(self.data_length),
                                               timeout=PEER_CONNECT_TIMEOUT)
+            log.info(f'response from seeder: {response}')
             if response[28:48] != self.torrent.info_hash:
                 log.error(f"Info hash doesn't match for peer={self.peer.peer_id}!")
                 return
@@ -147,8 +147,10 @@ class PeerClient:
         elif message_id == PeerMessage.piece:
             log.info('Received a piece message, yay!')
             await self._handle_piece(payload)
+        elif message_id == PeerMessage.interested:
+            await self._handle_interested()
         elif message_id == PeerMessage.request:
-            await self._handle_piece(payload)
+            await self._handle_request(payload)
         else:
             log.info(f'Received a non-bitfield message, type={message_id}')
 
@@ -228,6 +230,20 @@ class PeerClient:
         block_data = payload[struct.calcsize(fmt):]
         await self._write(piece_index * self.torrent.piece_length + block_begin, block_data)
 
+    async def _read(self, offset: int, length: int):
+        # file_index = 0
+        # file_length = self.torrent.files[0].length
+
+        # file_to_write = self.torrent.files[file_index]
+        async with async_open('/Users/vigneshsomasundaram/Downloads/' + self.torrent.filename, 'r') as afp:
+            afp.seek(offset)
+            data = await afp.read(length)
+        log.debug('Successfully read from the file.' + str(self.torrent.filepath))
+
+        return data
+
+
+
     async def _write(self, offset: int, data: bytes):
         file_index = 0
         length = self.torrent.files[0].length
@@ -248,15 +264,83 @@ class PeerClient:
         # self.fd.write(data)
         log.info('Successfully wrote to the file.')
 
-    ###### send a block of code upon receiving a request
-    async def _send_block(self, request: BlockRequest):
+    async def accept(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> bytes:
+        self.reader = reader
+        self.writer = writer
+        await self._validate_protocol_data()
+        return await self._receive_info()
 
-        # TODO: Read the data from mile here
-        block = None
-        self._send_message(PeerMessage.piece, struct.pack('!2I', request.piece_index, request.block_begin), block)
+    async def _validate_protocol_data(self):
+        #TODO: check for reserved bytes
+        data_len = const.PROTOCOL_LEN + const.RESERVED_BYTES_LEN
+        response = await asyncio.wait_for(self.reader.readexactly(data_len), const.PEER_CONNECT_TIMEOUT)
+        if response[:const.PROTOCOL_LEN] != const.PROTOCOL:
+            pass
+            # raise ValueError('Unknown protocol')
 
-        self._uploaded += request.block_length
-        self._download_info.session_statistics.add_uploaded(self._peer, request.block_length)
+    async def _receive_info(self) -> bytes:
+        data_len = 20 + len(self.peer.peer_id)
+        response = await asyncio.wait_for(self.reader.readexactly(data_len), const.PEER_CONNECT_TIMEOUT)
 
-    async def _accept(self):
-        return None
+        actual_info_hash = response[:20]
+        actual_peer_id = response[20:]
+        if self.peer.peer_id == actual_peer_id:
+            raise ValueError('Connection to ourselves')
+        # if self._peer.peer_id is not None and self._peer.peer_id != actual_peer_id:
+        #     raise ValueError('Unexpected peer_id')
+        # self._peer.peer_id = actual_peer_id
+        return actual_info_hash
+
+    async def start(self):
+        while True:
+            await self._receive_message()
+
+    async def _handle_interested(self):
+        self.writer.write(struct.pack('!IB', 1, const.PeerMessage.unchoke.value))
+
+    async def _handle_request(self, payload):
+        piece_index, begin, length = struct.unpack('!3I', cast(bytes, payload))
+
+        self._validate_offset_range(piece_index, begin, length)
+        await self._send_block(piece_index, begin, length)
+
+
+        # if message_id == MessageType.request:
+        #     if length > PeerTCPClient.MAX_REQUEST_LENGTH:
+        #         raise ValueError('Requested {} bytes, but the current policy allows to accept requests '
+        #                          'of not more than {} bytes'.format(length, PeerTCPClient.MAX_REQUEST_LENGTH))
+        #     if (self._am_choking or not self._peer_interested or
+        #             not self._download_info.pieces[piece_index].downloaded):
+        #         # If peer isn't interested but requesting, their peer_interested flag wasn't considered
+        #         # when selecting who to unchoke, so we may be not ready to upload to them.
+        #         # If requested piece is not downloaded yet, we shouldn't disconnect because our piece_downloaded flag
+        #         # could be removed because of file corruption.
+        #         return
+        #
+        #     await self._send_block(request)
+        #     await self.drain()
+        # elif message_id == MessageType.cancel:
+        #     # Now we answer to a request immediately or reject and forget it,
+        #     # so there's no need to handle cancel messages
+        #     pass
+        # print("REACHEFD HERE!!1")
+        # pass
+
+    async def _send_block(self, piece_index, block_begin, block_length):
+        block = await self._read(
+            piece_index * self.torrent.download_info.pieces[piece_index].length + block_begin, block_length)
+        # self._send_message(PeerMessage.piece, struct.pack('!2I', piece_index, block_begin, block))
+        self._send_message(PeerMessage.piece, struct.pack('!2I', piece_index, block_begin) + bytes(block, 'utf-8'))
+        # self._uploaded += block_length
+        # self._download_info.session_statistics.add_uploaded(self._peer, block_length)
+
+    def _validate_offset_range(self, piece_index, block_begin, block_length):
+        if piece_index < 0 or piece_index >= self.torrent.download_info.piece_count:
+            raise IndexError('Piece index out of range')
+        end_offset = piece_index * self.torrent.download_info.pieces[piece_index].length + \
+            block_begin + block_length
+        if (block_begin < 0 or block_begin + block_length > self.torrent.download_info.pieces[piece_index].length or
+                end_offset > self.torrent.length):
+            raise IndexError('Position in piece out of range')
+        pass
+
