@@ -127,7 +127,7 @@ class PeerClient:
             response = await asyncio.wait_for(self.reader.readexactly(length), timeout=PEER_CONNECT_TIMEOUT)
             # log.info(f'Message info={response}')
         except IncompleteReadError:
-            log.warn(f'0 bytes read from peer={self.torrent.peer_id}')
+            # log.warn(f'0 bytes read from peer={self.torrent.peer_id}')
             return
 
         if not response:
@@ -235,11 +235,11 @@ class PeerClient:
         # file_length = self.torrent.files[0].length
 
         # file_to_write = self.torrent.files[file_index]
-        async with async_open('/Users/vigneshsomasundaram/Downloads/' + self.torrent.filename, 'r') as afp:
+        async with async_open('/Users/vigneshsomasundaram/Downloads/' + self.torrent.filename, 'rb') as afp:
             afp.seek(offset)
             data = await afp.read(length)
-        log.debug('Successfully read from the file.' + str(self.torrent.filepath))
-
+        log.info('Successfully read from the file.' + str(self.torrent.filepath))
+        await afp.close()
         return data
 
 
@@ -330,7 +330,7 @@ class PeerClient:
         block = await self._read(
             piece_index * self.torrent.download_info.pieces[piece_index].length + block_begin, block_length)
         # self._send_message(PeerMessage.piece, struct.pack('!2I', piece_index, block_begin, block))
-        self._send_message(PeerMessage.piece, struct.pack('!2I', piece_index, block_begin) + bytes(block, 'utf-8'))
+        self._send_message(PeerMessage.piece, struct.pack('!2I', piece_index, block_begin) + block)
         # self._uploaded += block_length
         # self._download_info.session_statistics.add_uploaded(self._peer, block_length)
 
