@@ -33,12 +33,12 @@ class Seeder:
     def _load_torrent_files(self):
         dir_list = os.listdir(self.torrent_folder_loc)
         for torrent_file_name in dir_list:
-            torrent = Torrent('../../data/' + torrent_file_name)
+            torrent = Torrent('../../data/torrents/' + torrent_file_name)
             self.torrents[torrent.info_hash] = torrent
 
 
 if __name__ == '__main__':
-    seeder = Seeder('/Users/vigneshsomasundaram/Documents/Fall 2022/Networks/Project/p2p/data', None)
+    seeder = Seeder('/Users/vigneshsomasundaram/Documents/Fall 2022/Networks/Project/p2p/data/torrents', None)
     # seeder.start()
     with closing(asyncio.get_event_loop()) as loop:
         loop.run_until_complete(seeder.start())
