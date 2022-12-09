@@ -42,4 +42,8 @@
 
 Bittorrent is one of the most popular and powerful protocols for peer-to-peer file sharing. We started with the goal of understanding the internals of the Bittorrent protocol and aimed to implement it from scratch. We were successful in developing the protocol and implement it in the mininet environment. We compared the performance of our implementation with several other popular bittorrent clients and obtained comparable results. Bittorrent protocol is exciting with several applications such as on-demand video processing, clients downloading only required information and we are excited to extend our work with several enhancements as mentioned in the future scope below.
 
+## Implementation :
+
+* Git Repo https://github.com/cueo/p2p
+
 
